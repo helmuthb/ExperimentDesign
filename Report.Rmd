@@ -1,0 +1,229 @@
+---
+title: "Experiment Design for Data Science - Exercise 1"
+author: "Helmuth Breitenfellner, 08725866"
+date: "9.11.2019"
+output: pdf_document
+geometry: "left=2cm,right=2cm,top=2cm,bottom=2cm"
+fontsize: 11pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Data Exploration
+
+The data contains user ratings for movies, together with data about the movies
+and data about the users.
+
+**Correlations:**
+For the initial data exploration I have been using \textsf{R}.
+In a first step I denormalized the data into one data frame, added
+a few calculated fields (month, day of week or month, hour of review,
+movie age = time between review and release of the movie) and looked for correlations.
+
+A few correlations could be identified. They are generally low, however
+given the number of samples some of them might be statistically significant
+(_I did not perform any specific statistical tests whether these
+correlations are statistically significant._):
+
+* Rating and movie age correlate with 0.17 (Pearson correlation coefficient)
+* Movie age and reviewer age correlate with 0.12
+* Hour of review and reviewer age correlate with 0.17
+
+Also some small correlation between the month of the review and the rating
+(correlation coefficient = 0.04) was detected.
+
+```{r, warning=FALSE, echo=FALSE, error=FALSE, message=FALSE, eval=FALSE}
+library(dplyr)
+library(lubridate)
+# load data
+u.data <- read.delim('ml-100k/u.data', header = FALSE)
+colnames(u.data) <- c('user', 'item', 'rating', 'timestamp')
+u.user <- read.delim('ml-100k/u.user', sep = '|', header = FALSE)
+colnames(u.user) <- c('user', 'age', 'gender', 'occupation', 'zip code')
+u.item <- read.delim('ml-100k/u.item', sep = '|', header = FALSE)
+colnames(u.item) <- c(
+  'item', 'name', 'release_date', 'video_date', 'imdb_url',
+  'unknown', 'action', 'adventure', 'animation', 'childrens',
+  'comedy', 'crime', 'documentary', 'drama', 'fantasy',
+  'film_noir', 'horror', 'musical', 'mystery', 'romance',
+  'scifi', 'thriller', 'war', 'western')
+# Additional supplementary data
+u.genre <- read.delim('ml-100k/u.genre', sep = '|', header = FALSE)
+colnames(u.genre) <- c('genre', 'colnum')
+u.occupation <- read.delim('ml-100k/u.occupation', header = FALSE)
+# add user & movie data to full.data
+user.rating <- merge(u.data, u.user, by = "user")
+movie.rating <- merge(u.data, u.item, by = "item")
+all.rating <- merge(user.rating, movie.rating,
+                    by = c("user", "item", "rating", "timestamp"))
+# get timestamp as R POSIXct
+all.rating$datetime <- as.POSIXct(
+  all.rating$timestamp, tz = 'GMT', origin = '1970-01-01')
+# add month number, day in month, day in week and hour
+all.rating$month <- month(all.rating$datetime)
+all.rating$mday <- mday(all.rating$datetime)
+all.rating$wday <- wday(all.rating$datetime)
+all.rating$hour <- hour(all.rating$datetime)
+all.rating$gendercode <- as.numeric(all.rating$gender)
+# add release date as POSIXct object
+all.rating$release_date2 <- as.POSIXct(
+  all.rating$release_date, tz = "GMT", format = "%d-%b-%Y")
+# calculate age of rating - compared to release date
+all.rating$rating_age <- as.numeric(
+  difftime(
+    all.rating$datetime, all.rating$release_date2, units = "days"
+  )
+)
+# correlation
+subdata <- select(all.rating, rating, rating_age, age, hour,
+                  mday, wday, month, gendercode)
+# PerformanceAnalytics::chart.Correlation(subdata, histogram=TRUE, pch=19)
+# library(corrr)
+
+# subdata %>% correlate() %>% network_plot(min_cor=0.05)
+library(psych)
+pairs.panels(subdata, show.points = FALSE)
+```
+Then I looked into the histograms for the rating depending on the
+genre of the movie. Due to the page limit I did not depict them here,
+but some aspects are visible:
+
+* Animation movies get the best, and Action movies the worst rating
+
+```{r, eval=FALSE}
+# add column "genre"
+all.rating$genre <- 'unknown'
+all.rating$genre[1 == all.rating$action] = 'action'
+all.rating$genre[1 == all.rating$adventure] = 'adventure'
+all.rating$genre[1 == all.rating$animation] = 'animation'
+all.rating$genre[1 == all.rating$childrens] = 'childrens'
+all.rating$genre[1 == all.rating$comedy] = 'comedy'
+all.rating$genre[1 == all.rating$crime] = 'crime'
+all.rating$genre[1 == all.rating$documentary] = 'documentary'
+all.rating$genre[1 == all.rating$drama] = 'drama'
+all.rating$genre[1 == all.rating$fantasy] = 'fantasy'
+all.rating$genre[1 == all.rating$film_noir] = 'film noir'
+all.rating$genre[1 == all.rating$horror] = 'horror'
+all.rating$genre[1 == all.rating$musical] = 'musical'
+all.rating$genre[1 == all.rating$mystery] = 'mystery'
+all.rating$genre[1 == all.rating$romance] = 'romance'
+all.rating$genre[1 == all.rating$scifi] = 'scifi'
+all.rating$genre[1 == all.rating$thriller] = 'thriller'
+all.rating$genre[1 == all.rating$war] = 'war'
+all.rating$genre[1 == all.rating$western] = 'western'
+
+library(dplyr)
+all.rating %>%
+  group_by(genre) %>%
+  summarize(mean(rating))
+# library(lattice)
+# histogram(~ rating | genre, data = all.rating)
+```
+
+**Privacy Issues:**
+The user related data is quite detailed. This could even be used to identify
+a single person. For example there is only one kid of age 7 in the
+user list - if it would be known that he is in the list one could
+clearly identify his ratings.
+
+# Hypothesis A
+
+_The correlation between rating and month of the rating can be used
+to improve the performance of a User-User CF rating prediction algorithm._
+
+**Dependent and independent Variables**
+The *independent variable* in this hypothesis is whether an adjustment
+of the rating depending on the month of the review shall be appied
+or not.$\\$
+The *dependent variable* is the performance of the prediction algorithm.
+
+**Control Condition**
+In the first case, a User-User CF rating prediction is performed and the
+performance is measured.
+
+In the second case, the influence of the month of review for the
+known ratings is first substracted.
+Then from the adjusted input the User-User CF rating prediction is performed.
+At the end the influence of the month of the review is
+added to the predicted rating.
+
+The User-User CF rating prediction algorithm is in both cases exactly the
+same. All other aspects (e.g. data set sampled) are the same as well.
+
+**Performance Indicator**
+For measuring the performance RMSE is used. A statistical test (e.g. _sign test_)
+is used to decide whether the number of cases with increased performance is
+statistically significant.
+
+**Simulate Real-World Conditions**
+The test data is later in time than the training or development data.
+
+# Hypothesis B
+
+_Using half-precision (16 bit) floats in an SVD algorithm will not
+affect the performance of the rating prediction when compared with
+double precision (64 bit) floats, but will significantly
+reduce the runtime._
+
+**Dependent and independent Variables:**
+The *independent variable* in this hypothesis is whether half-precision
+(16 bit) or single precision (32 bit) calculations are performed.$\\$
+The *dependent variables* are the prediction performance as well as
+the runtime of the prediction algorithm.
+
+**Control Condition:**
+In the first case, the SVD algorithm is used to predict ratings
+from previous ratings. For this the algorithm is running using 32 bit
+floats.
+The implementation is written in CUDA. The experiment is performed on
+a Tesla V100 GPGPU.
+
+In the second case, the same SVD algorithm is used; however,
+the numerical precision is changed to half-precision (16 bit).
+
+The SVD rating prediction algorithm is in both cases exactly the
+same. All other aspects (e.g. data set sampled) are the same as well.
+
+**Performance Indicator:**
+For measuring the prediction performance RMSE is used. A statistical test
+is used to decide whether the difference in prediction performance is
+significant or not.$\\$
+The runtime is measured as elapsed total time, including time for file I/O.
+A statistical test is used to decide whether the difference in runtime
+performance is significant or not.
+
+**Simulate Real-World Conditions:**
+The test data is later in time than the training or development data.
+
+# Hypothesis C
+
+_A gender-sensitive rating prediction is performing better
+in ranking movies._
+
+**Dependent and independent Variables:**
+The *independent variable* in this hypothesis is whether only gender
+conforming data is used or all data irrespective of gender.$\\$
+The *dependent variables* is the prediction performance.
+
+**Control Condition:**
+In the first case, a state-of-the-art rating prediction algorithm
+(e.g. again the SVD algorithm) is used
+to predict a rating for a user-movie combination, using all available data
+in the training set.$\\$
+In the second case, the same algorithm is trained twice: once for ratings
+from men and once for ratings from women.
+This means that the effective training set is smaller for the two models,
+but the models are better aligned to the target used. All other parameters
+are kept the same.
+To predict a new rating, the model is chosen depending on the gender of
+the user whose rating is to be predicted.
+
+**Performance Indicator:**
+For measuring the performance RMSE is used. A statistical test (e.g. _sign test_)
+is used to decide whether the number of cases with increased performance is
+statistically significant.
+
+**Simulate Real-World Conditions**
+The test data is later in time than the training or development data.
